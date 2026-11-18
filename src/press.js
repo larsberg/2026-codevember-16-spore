@@ -51,6 +51,10 @@ export function bindPress(canvas, camera, orbit, bodies, running, audio) {
   const up = event => finish(event, false);
   const cancel = event => finish(event, true);
   const cancelAll = () => { for (const id of contacts.keys()) end(id, true); };
+  // OrbitControls stops suppressing native menus while a puffball is held.
+  const preventDefault = event => event.preventDefault();
+  canvas.addEventListener('contextmenu', preventDefault);
+  canvas.addEventListener('selectstart', preventDefault);
   canvas.addEventListener('pointerdown', down, true);
   canvas.addEventListener('pointermove', move);
   canvas.addEventListener('pointerup', up);
@@ -61,6 +65,8 @@ export function bindPress(canvas, camera, orbit, bodies, running, audio) {
     cancel: cancelAll,
     dispose() {
       cancelAll(); window.removeEventListener('blur', cancelAll);
+      canvas.removeEventListener('contextmenu', preventDefault);
+      canvas.removeEventListener('selectstart', preventDefault);
       canvas.removeEventListener('pointerdown', down, true); canvas.removeEventListener('pointermove', move);
       canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', cancel);
       canvas.removeEventListener('lostpointercapture', cancel);
