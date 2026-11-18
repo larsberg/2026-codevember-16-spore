@@ -2,13 +2,7 @@ import { instruments, meshNote } from './synth-settings.js';
 
 export const reedFrequency = note => 440 * 2 ** ((note - 69) / 12);
 
-function holdAt(param, time, fallback) {
-  if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(time);
-  else {
-    param.cancelScheduledValues(time);
-    param.setValueAtTime(fallback, time);
-  }
-}
+const attackCurve = Float32Array.from({ length: 65 }, (_, i) => .5 - .5 * Math.cos(Math.PI * i / 64));
 
 export function createSporeReed(api, context) {
   const voices = new Set();
@@ -33,7 +27,8 @@ export function createSporeReed(api, context) {
       filter.type = 'bandpass';
       return filter;
     }
-    const mix = gainNode(), envelope = gainNode(), dry = gainNode(), buzz = gainNode(), air = gainNode();
+    const mix = gainNode(), envelope = gainNode(), releaseGate = gainNode();
+    const dry = gainNode(), buzz = gainNode(), air = gainNode();
     const mouth = bandpass(), nose = bandpass(), airBand = bandpass();
     const membrane = track(context.createWaveShaper());
     membrane.curve = membraneCurve;
@@ -58,25 +53,27 @@ export function createSporeReed(api, context) {
     air.connect(exciter);
     lungs.connect(breathDepth).connect(mix.gain);
     shake.connect(shakeDepth).connect(mouth.frequency);
-    lungs.start(time); shake.start(time); mix.connect(envelope);
+    lungs.start(time); shake.start(time); mix.connect(envelope).connect(releaseGate);
 
     const gain = envelope.gain;
-    const peak = time + Math.max(.012, value.attack);
-    gain.setValueAtTime(0, time);
-    gain.linearRampToValueAtTime(1, peak);
-    gain.setTargetAtTime(value.sustain, peak, Math.max(.01, value.decay / 3));
+    const attack = Math.max(.032, value.attack);
+    gain.value = 0;
+    gain.setValueCurveAtTime(attackCurve, time, attack);
+    gain.setTargetAtTime(value.sustain, time + attack, Math.max(.01, value.decay / 3));
     const pitch = carrier.detune;
     pitch.setValueAtTime(-instruments[settings.instrument].scoop, time);
-    let releasing = false, force = value.reedPressure;
-    function shape(at = context.currentTime) {
-      if (releasing) return;
+    let silentAt = Infinity, force = value.reedPressure;
+    function shape(at = context.currentTime, initial = false) {
+      if (silentAt !== Infinity) return;
       at = Math.max(at, time);
       const p = settings, timbre = instruments[p.instrument];
       const squeeze = Math.max(0, Math.min(1, (force - .3) / .85));
-      const tune = (param, target, speed = .045) => param.setTargetAtTime(target, at, speed);
+      // Start the breath oscillators at their sub-audio rates and the air path
+      // at its actual mix. Glide only changes made to an already sounding reed.
+      const tune = (param, target) => initial ? param.setValueAtTime(target, at) : param.setTargetAtTime(target, at, .045);
       carrier.type = p.voices[layer].sound;
       tune(carrier.frequency, reedFrequency(meshNote(p, body, layer)));
-      tune(pitch, (squeeze - (.89 - .3) / .85) * 200 * p.bend, .065);
+      pitch.setTargetAtTime((squeeze - (.89 - .3) / .85) * 200 * p.bend, at, .065);
       tune(dry.gain, timbre.dry);
       tune(exciter.gain, .8 + 2.9 * p.buzz);
       tune(buzz.gain, timbre.reed * p.buzz * (layer ? .76 : 1.06));
@@ -91,28 +88,33 @@ export function createSporeReed(api, context) {
       tune(shakeDepth.gain, timbre.mouth * .18 * p.flutter);
     }
     function release(immediate = false, at = context.currentTime) {
-      if (releasing && !immediate) return;
-      releasing = true;
-      const tail = immediate ? 0 : Math.max(.045, value.release);
-      const amplitude = at < peak ? Math.max(0, (at - time) / (peak - time))
-        : value.sustain + (1 - value.sustain) * Math.exp(-(at - peak) / Math.max(.01, value.decay / 3));
-      holdAt(gain, at, amplitude);
-      if (immediate || at < time) {
-        gain.setValueAtTime(0, at);
-        envelope.disconnect();
+      const tail = immediate ? .020 : Math.max(.10, value.release);
+      const end = at <= time ? at : at + tail;
+      if (end >= silentAt || (!immediate && silentAt !== Infinity)) return;
+      silentAt = end;
+      // A separate gate can close during attack, decay or a previously
+      // scheduled preview without cancelling the envelope under the note.
+      const gate = releaseGate.gain;
+      gate.cancelScheduledValues(at);
+      if (at <= time) {
+        gate.setValueAtTime(0, at);
       } else {
-        holdAt(pitch, at, pitch.value);
-        pitch.setTargetAtTime(-instruments[settings.instrument].scoop, at, tail * .3);
-        gain.linearRampToValueAtTime(0, at + tail);
+        gate.setTargetAtTime(0, at, tail * .28);
+        gate.setTargetAtTime(0, at + tail * .65, tail * .04);
+        gate.setValueAtTime(0, end);
+        pitch.setTargetAtTime(-instruments[settings.instrument].scoop, at, tail * .45);
       }
-      lungs.stop(at + tail); shake.stop(at + tail); noise.stop(at + tail); reed.stop(at + tail);
+      // Give the downstream filters a few render quanta to drain before
+      // Strudel disconnects the note and its effect sends.
+      const stop = end + .016;
+      lungs.stop(stop); shake.stop(stop); noise.stop(stop); reed.stop(stop);
     }
     const voice = { held: value.reedHeld, body, shape, release,
-      pressure(next) { force = next; shape(); }, get sounding() { return !releasing; } };
+      pressure(next) { force = next; shape(); }, get sounding() { return silentAt === Infinity; } };
     voices.add(voice);
-    shape(time);
+    shape(time, true);
     if (!voice.held) release(false, time + value.duration);
-    return { node: envelope, nodes: reed.nodes, stop: at => release(true, at) };
+    return { node: releaseGate, nodes: reed.nodes, stop: at => release(true, at) };
   }, { type: 'synth' });
 
   return {
