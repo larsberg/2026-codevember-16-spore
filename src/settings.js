@@ -2,7 +2,7 @@ import { applyStudioPalette } from './studio-palettes.js';
 import { defaultLighting, validateLighting } from './lighting-settings.js';
 import { defaultMaterials, validateMaterials } from './material-settings.js';
 import { defaultPaletteLibrary, validatePaletteLibrary, libraryPalettes } from './palette-library.js';
-import { audioFields, defaultVoices, validateVoices } from './synth-settings.js';
+import { audioChoices, audioFields, defaultVoices, validateVoices } from './synth-settings.js';
 
 export const DEFAULT_CAMERA = { yaw: 7, elevation: 8, distance: 6.38, offsetX: .40, offsetY: 1.76, offsetZ: 0 };
 export const fields = {
@@ -53,6 +53,7 @@ export function validateSetup(value) {
   for (const [group, entries] of Object.entries(fields)) for (const [key, [, initial, min, max]] of Object.entries(entries)) {
     const x = value[group]?.[key] ?? result[group][key];
     const valid = typeof initial === 'number' ? Number.isFinite(x) && x >= min && x <= max
+      : group === 'audio' && audioChoices[key] ? typeof x === 'string' && Object.hasOwn(audioChoices[key], x)
       : typeof initial === 'boolean' ? typeof x === 'boolean' : typeof x === 'string' && /^#[0-9a-f]{6}$/i.test(x);
     if (!valid) throw Error(`Invalid ${group}.${key}.`);
     result[group][key] = x;

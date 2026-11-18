@@ -1,18 +1,21 @@
 import { createSynthPattern, modulateVoice, synthValue } from './synth.js';
 import { createLiveModulation, liveSynthValue } from './live-modulation.js';
+import { meshNote } from './synth-settings.js';
+import { createSporeReed } from './spore-reed.js';
 import { resumeAudioContext } from './audio-autoplay.js';
 import { createAudioAnalysis, silentAnalysis } from './audio-analysis.js';
 
-// Melt's saved enabled state and cancellable activation; native Strudel voices,
-// patterns and bus modulation. The move clock is the only note clock.
+// The pointer gates the reeds. The studio audition uses a finite Strudel pattern.
 export function createAudio({ load = () => import('@strudel/web'), onError = console.warn,
   onStatus = () => {}, loadEffects, synthLevel = 1, synthMaxVoices = Infinity, modulationHz = Infinity,
-  resumeContext = resumeAudioContext, createModulation = createLiveModulation, createAnalysis = createAudioAnalysis } = {}) {
-  let api, context, repl, loading, starting, contextResume, settings, modulation;
+  createModulation = createLiveModulation, resumeContext = resumeAudioContext, createInstrument = createSporeReed, createAnalysis = createAudioAnalysis } = {}) {
+  let api, context, repl, loading, starting, contextResume, settings, instrument, modulation;
+  const held = new Map();
+  let modulatedAt = -Infinity;
   let pattern, patternKey, busy = false, disposed = false, running = true;
   let active = false, waitingForInteraction = false, operation = 0, eventCount = 0, failed = false;
   let currentMove, recentNotes = [], recentEffects = [];
-  let effects, synthSettings, synthEnds = [], modulatedAt = -Infinity;
+  let effects, synthSettings, synthEnds = [];
   const sceneMix={levels:[1,1],pans:[0,0]};
   function applySceneMix() {
     if(!synthSettings)return;
@@ -24,8 +27,21 @@ export function createAudio({ load = () => import('@strudel/web'), onError = con
   function syncModulation() {
     const musical = synthLevel > 0 && settings.voices.some(voice => voice.enabled);
     if (musical && !modulation) modulation = createModulation(api, context);
-    if (!musical && modulation) { modulation.dispose(); modulation = undefined; }
+    // Feed zero levels before removing the buses if both voices are muted.
     modulation?.update(synthSettings, positions, floor);
+    if (!musical && modulation) {
+      instrument?.release(true);
+      modulation.dispose(); modulation = undefined;
+    }
+  }
+  function playReed(voice, pressure, duration, body, offset = 0) {
+    const patch = liveSynthValue(synthValue(synthSettings, voice, positions, floor), voice, body);
+    patch.note = meshNote(synthSettings, body, voice);
+    return instrument.play(patch, voice, pressure, duration, body, offset);
+  }
+  function releasePress(immediate = false, body = 0) {
+    held.delete(body);
+    instrument?.release(immediate, body);
   }
   function status(message, error = false) {
     onStatus({ message, error, enabled: !!settings?.enabled, paused: !running, playing: active, busy, waitingForInteraction });
@@ -37,7 +53,7 @@ export function createAudio({ load = () => import('@strudel/web'), onError = con
     patternKey = key; pattern = createSynthPattern(api, settings.voices, index => index);
   }
   function halt() {
-    effects?.stop(); synthEnds = []; modulatedAt = -Infinity;
+    held.clear(); instrument?.release(true); effects?.stop(); synthEnds = []; modulatedAt = -Infinity;
     operation++; active = false; busy = false;
     contextResume?.cancel(); contextResume = undefined; waitingForInteraction = false;
     analysis?.dispose(); analysis = undefined; repl?.pause(); modulation?.dispose(); modulation = undefined;
@@ -55,6 +71,8 @@ export function createAudio({ load = () => import('@strudel/web'), onError = con
       context = api.getAudioContext(); repl = await api.initStrudel();
       if (disposed) { repl.stop(); if (context.state !== 'closed') await context.close(); return; }
       await api.initAudio(); if (disposed) { repl.stop(); return; }
+      instrument = createInstrument(api, context);
+      instrument.configure?.(synthSettings);
       if (loadEffects) effects = await loadEffects(api, context);
       effects?.configure?.(settings);
       if (disposed) { effects?.dispose(); repl.stop(); return; }
@@ -78,10 +96,8 @@ export function createAudio({ load = () => import('@strudel/web'), onError = con
         if (synthEnds.length >= synthMaxVoices) continue;
         synthEnds.push(context.currentTime + .03 + duration + settings.voices[voice].release);
       }
-      const value = liveSynthValue(synthValue(synthSettings, voice, positions, floor), voice);
       const token = operation;
-      // superdough 1.3 expects an absolute AudioContext timestamp.
-      void api.superdough(value, context.currentTime + .03, duration, 1 / event.duration, onset)
+      void Promise.all([0, 1, 2].map(body => playReed(voice, .89, duration, body, event.preview ? onset * event.duration : 0)))
         .then(() => {
           if (token !== operation) return;
           eventCount++; recentNotes.push({ serial: event.serial, voice, duration }); recentNotes = recentNotes.slice(-24);
@@ -110,22 +126,47 @@ export function createAudio({ load = () => import('@strudel/web'), onError = con
     return starting;
   }
   return {
-    // The Fold scene has no live scopes. Allocate FFT taps only when inspected.
+    // Allocate FFT taps only when inspected.
     get analysis() { if (active) analysis ??= createAnalysis(api, context); return active ? analysis?.read() ?? silence : silence; },
     get unlocked() { return active && context?.state === 'running'; },
-    get diagnostics() { return { engine: 'Strudel', enabled: !!settings?.enabled, running: active, busy, waitingForInteraction,
-      events: eventCount, effects: effects?.diagnostics, recentNotes, recentEffects, live: modulation?.diagnostics, context: context?.state ?? 'locked' }; },
+    get diagnostics() { return { engine: 'Strudel', enabled: !!settings?.enabled, running: active, busy, waitingForInteraction, heldVoices: instrument?.heldVoices ?? 0,
+      heldNotes: [...held.keys()].map(body => ({ body, note: meshNote(synthSettings, body, 0) })), events: eventCount, effects: effects?.diagnostics, recentNotes, recentEffects, live: modulation?.diagnostics, context: context?.state ?? 'locked' }; },
     get modulation() { return settings?.voices.map(voice => modulateVoice(voice, positions, floor).routes) ?? []; },
     configure(next) {
       const changedEnabled = settings?.enabled !== next.enabled;
       settings = structuredClone(next); synthSettings = { ...settings, volume: settings.volume * synthLevel,voices:settings.voices.map(voice=>({...voice})) };applySceneMix();
       effects?.configure?.(settings);
+      instrument?.configure?.(synthSettings);
       refresh(); if (active) syncModulation();
       if (!settings.enabled) { if (changedEnabled || active || busy) halt(); }
       else if (!running) status('Sounds enabled · paused with sketch');
       else if (changedEnabled) { failed = false; void start(); }
     },
     async unlock() { failed = false; return start(); },
+    async press(pressure, body = 0) {
+      if (!wanted() || !synthLevel) return;
+      releasePress(false, body);
+      const gesture = { pressure };
+      held.set(body, gesture);
+      failed = false;
+      await start();
+      if (!active || !wanted() || held.get(body) !== gesture) return;
+      const token = operation;
+      try {
+        await Promise.all(synthSettings.voices.map(async (voice, index) => {
+          if (!voice.enabled) return;
+          await playReed(index, gesture.pressure, undefined, body);
+          if (token === operation) eventCount++;
+        }));
+      } catch (error) { if (!disposed && held.get(body) === gesture) report(error); }
+    },
+    pressure(value, body = 0) {
+      const gesture = held.get(body);
+      if (!gesture) return;
+      gesture.pressure = value;
+      instrument?.pressure(value, body);
+    },
+    release: releasePress,
     clearEffects() { effects?.stop(); },
     setScene(value) {
       sceneMix.levels=value.levels.map(v=>Math.max(0,Math.min(1,v)));
@@ -136,8 +177,6 @@ export function createAudio({ load = () => import('@strudel/web'), onError = con
       if (move) currentMove = move;
       const wasRunning = running; running = play;
       if (wasRunning && !play) halt();
-      // Every frame, including gaps between moves and empty rhythms. Audio
-      // control signals never wait for a note onset to follow a corner.
       if (modulation && context.currentTime - modulatedAt >= 1 / modulationHz) {
         modulation.update(synthSettings, positions, floor); modulatedAt = context.currentTime;
       }

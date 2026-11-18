@@ -16,7 +16,7 @@ test('atomic GET/PUT round trip uses Spore ownership and retains the complete st
  }
  try {
   const setup=defaultSetup();setup.physics.gravity=6;setup.camera.yaw=67;setup.bloom.enabled=true;setup.focus.enabled=true;
-  setup.materials.panels.roughness=.13;setup.audio.enabled=false;setup.lighting.environment.intensity=1.8;
+  setup.materials.panels.roughness=.13;setup.audio.enabled=false;Object.assign(setup.audio,{instrument:'bottle',chord:'hollow',breath:.24,buzz:.37,vowel:.91,flutter:.6,breathRate:23,bend:4});setup.lighting.environment.intensity=1.8;
   Object.assign(setup.lighting.spotlight,{penumbra:.9,softness:7.5,intensity:11200});
   assert.equal((await request('PUT',setup,'01-fold')).status,409);
   assert.equal((await request('PUT',{...setup,generation:{seed:184847}})).status,200);

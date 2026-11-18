@@ -7,7 +7,7 @@ export function resumeAudioContext(context, { target = document, onWaiting = () 
   function finish(running, error) {
     if (settled) return;
     settled = true;
-    for (const gesture of gestures) target.removeEventListener(gesture, attempt);
+    for (const gesture of gestures) target.removeEventListener(gesture, attempt, true);
     context.removeEventListener("statechange", changed);
     if (error) reject(error); else resolve(running);
   }
@@ -25,7 +25,8 @@ export function resumeAudioContext(context, { target = document, onWaiting = () 
     catch (error) { failed(error); }
     changed();
   }
-  for (const gesture of gestures) target.addEventListener(gesture, attempt);
+  // Listen before the canvas claims the press for the soft body.
+  for (const gesture of gestures) target.addEventListener(gesture, attempt, true);
   context.addEventListener("statechange", changed);
   changed();
   if (!settled) attempt();

@@ -36,7 +36,7 @@ void main(){
   #include <colorspace_fragment>
 }`;
 
-function bedHeight(x,z) {
+export function bedHeight(x,z) {
   const ripple = .07*Math.sin(1.8*x+1.2*z)+.047*Math.sin(3*z-.8*x)+.028*Math.sin(5.2*x+2.3*z);
   const r = Math.sqrt(x*x*.35+z*z);
   const drop = Math.max(0, r-1.8);
@@ -113,7 +113,7 @@ function createLitter() {
   return mesh;
 }
 
-export function createWoodland(scene,renderer) {
+export function createWoodland(scene,renderer,feet) {
   const root=new Group(), fog=new FogExp2('#0e1613',.095);
   scene.fog=fog;
   const canopy=new Mesh(new SphereGeometry(1,40,18), new ShaderMaterial({
@@ -128,11 +128,13 @@ export function createWoodland(scene,renderer) {
   map.colorSpace=SRGBColorSpace; map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
   const earth=new MeshStandardMaterial({map,bumpMap:map,bumpScale:.027,roughness:.93,color:0xdcd9be});
   earth.onBeforeCompile=shader=>{
+    shader.uniforms.feet = { value: feet };
     shader.vertexShader='varying vec3 vBed;\n'+shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvBed=position;');
-    shader.fragmentShader='varying vec3 vBed;\n'+shader.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
+    shader.fragmentShader='uniform vec3 feet[3]; varying vec3 vBed;\n'+shader.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
       float pool=exp(-.10*dot(vBed.xz,vBed.xz));
       float dapple=.74+.26*sin(3.2*vBed.x+.7*sin(4.*vBed.z))*sin(2.*vBed.z+.8*vBed.x);
-      float contact=.48+.52*smoothstep(.27,.81,length(vBed.xz));
+      float contact=1.;
+      for(int i=0;i<3;i++){float r=length(vBed.xz-feet[i].xz)/feet[i].y;contact*=.48+.52*smoothstep(.27,.81,r);}
       diffuseColor.rgb*=mix(.045,1.,pool)*dapple*contact;`);
   };
   const bed=new PlaneGeometry(28,28,192,192); bed.rotateX(-Math.PI/2);

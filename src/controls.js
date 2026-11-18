@@ -1,5 +1,6 @@
 import { lightingControlsMarkup } from './lighting-controls.js';
 import { materialControlsMarkup } from './material-controls.js';
+import { audioChoices } from './synth-settings.js';
 import { fields } from './settings.js';
 import { synthControlsMarkup, bindSynthControls } from './synth-controls.js';
 import { libraryPalettes } from './palette-library.js';
@@ -9,6 +10,7 @@ const icon=path=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/
 const paths={pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',restart:'M3 4v6h6M3 10a8 8 0 1 1 2 8',save:'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2ZM7 3v6h10V3M7 21v-8h10v8',reload:'M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7M20 7v5l-5-5'};
 function field(group,key){const [label,initial,min,max,step]=fields[group][key],id=`${group}-${key}`,data=`data-group="${group}" data-key="${key}"`;
   if(typeof initial==='boolean')return `<label class="lighting-toggle"><input id="${id}" ${data} type="checkbox">${label}</label>`;
+  if(group==='audio' && audioChoices[key])return `<label class="audio-field">${label}<select id="${id}" ${data}>${Object.entries(audioChoices[key]).map(([value, option])=>`<option value="${value}">${option.label}</option>`).join('')}</select></label>`;
   if(typeof initial==='string')return `<label class="color-label" for="${id}">${label}<output></output><input id="${id}" ${data} type="color"></label>`;
   if(group==='camera')return `<label for="${id}">${label}<input id="${id}" ${data} type="number" min="${min}" max="${max}" step="${step}"></label>`;
   return `<label class="slider-label" for="${id}">${label}<output></output></label><input id="${id}" ${data} type="range" min="${min}" max="${max}" step="${step}">`;
@@ -32,11 +34,11 @@ export function createControls({settings,change,save,reload,resetView,exportDraw
         <section id="panel-mesh" role="tabpanel" aria-labelledby="tab-mesh"><button data-action="export">Export PNG</button></section>
         <section id="panel-physics" role="tabpanel" aria-labelledby="tab-physics" hidden>${group('physics',['gravity','friction'])}</section>
         <section id="panel-palettes" role="tabpanel" aria-labelledby="tab-palettes" hidden>${paletteWorkshopMarkup()}</section>
-        <section id="panel-audio" role="tabpanel" aria-labelledby="tab-audio" hidden><p class="control-heading">Strudel</p><div class="audio-toolbar"><button type="button" class="audio-start">Enable sounds</button><button type="button" class="audio-stop">Mute sounds</button><button type="button" data-action="audition">Preview voices (F)</button></div><p class="audio-status" role="status">Sounds muted</p>${group('audio',['volume','tempo'])}${synthControlsMarkup()}</section>
+        <section id="panel-audio" role="tabpanel" aria-labelledby="tab-audio" hidden><p class="control-heading">Strudel</p><div class="audio-toolbar"><button type="button" class="audio-start">Enable sounds</button><button type="button" class="audio-stop">Mute sounds</button><button type="button" data-action="audition">Preview chord (F)</button></div><p class="audio-status" role="status">Sounds muted</p>${group('audio',['instrument','chord','volume','breath','buzz','vowel','flutter','breathRate','bend','tempo'])}${synthControlsMarkup()}</section>
         <section id="panel-materials" role="tabpanel" aria-labelledby="tab-materials" hidden>${materialControlsMarkup()}</section>
         <section id="panel-lighting" role="tabpanel" aria-labelledby="tab-lighting" hidden><p class="control-heading">Studio</p>${group('studio')}${lightingControlsMarkup()}<details class="material-group"><summary>Bloom</summary>${group('bloom')}</details></section>
         <section id="panel-camera" role="tabpanel" aria-labelledby="tab-camera" hidden><div class="camera-controls">${group('camera')}</div><button class="reset-camera">Reset view</button><details class="material-group"><summary>Tilt blur</summary>${group('focus')}</details></section>
-        <section id="panel-info" role="tabpanel" aria-labelledby="tab-info" hidden><p class="camera-hint">Press the puffball to release spores. Drag the background to orbit. Right-drag to pan. Scroll to zoom.</p><p class="camera-hint">P pause · H controls · M sound · F preview voices</p></section>
+        <section id="panel-info" role="tabpanel" aria-labelledby="tab-info" hidden><p class="camera-hint">Hold a puffball to play its note and expel spores. Hold several with touch to play a chord. Drag the background to orbit. Right-drag to pan. Scroll to zoom.</p><p class="camera-hint">P pause · H controls · M sound · F preview voices</p></section>
       </fieldset></div>
     </aside>`);
   const query=s=>shell.querySelector(s),drawer=query('.control-panel'),toggle=query('.drawer-toggle');

@@ -108,10 +108,10 @@ function deform(material, texture, beauty = false) {
   material.customProgramCacheKey = () => 'spore-rind-' + beauty;
 }
 
-export function createRind(simulation) {
+export function createRind(simulation, detail = 1) {
   const data = new Float32Array(sectors * rows * 4);
   const cage = new DataTexture(data, sectors, rows, RGBAFormat, FloatType);
-  const geometry = new PlaneGeometry(1, 1, 256, 144);
+  const geometry = new PlaneGeometry(1, 1, Math.round(256 * detail), Math.round(144 * detail));
   // Increasing v runs up the fungus; increasing u runs clockwise from above.
   // Reverse PlaneGeometry's winding to match dP/dv cross dP/du.
   const index = geometry.index.array;
@@ -135,6 +135,8 @@ export function createRind(simulation) {
   pickGeometry.setIndex(triangles);
   const pickMaterial = new MeshBasicMaterial({ side: DoubleSide });
   const picker = new Mesh(pickGeometry, pickMaterial);
+  picker.visible = false;
+  mesh.add(picker);
   let revision = -1;
   function update() {
     if (revision === simulation.revision) return;

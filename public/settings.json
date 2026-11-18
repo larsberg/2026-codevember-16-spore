@@ -25,7 +25,15 @@
     "offset": 0
   },
   "audio": {
-    "enabled": false,
+    "instrument": "bassoon",
+    "chord": "hollow",
+    "breath": 0.67,
+    "buzz": 0.73,
+    "vowel": 0.53,
+    "flutter": 0.39,
+    "breathRate": 16,
+    "bend": 2,
+    "enabled": true,
     "volume": 0.3,
     "tempo": 120,
     "voices": [
@@ -233,7 +241,7 @@
   "camera": {
     "yaw": 7,
     "elevation": 8,
-    "distance": 6.38,
+    "distance": 8.9403543516,
     "offsetX": 0.4,
     "offsetY": 1.76,
     "offsetZ": 0

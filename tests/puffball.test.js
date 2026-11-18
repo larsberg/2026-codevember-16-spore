@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Vector3 } from 'three';
+import { Raycaster, Vector3 } from 'three';
 import { initPhysics } from '../src/physics.js';
 import { createPuffball, ringIndex, sectors } from '../src/puffball.js';
 import { createRind } from '../src/rind.js';
@@ -60,6 +60,28 @@ test('partial legacy saves acquire the woodland lighting and retain the edited s
   assert.equal(saved.camera.yaw,-43); assert.equal(saved.studio.exposure,.72);
   assert.equal(saved.lighting.fill.intensity,.46);
   assert.equal(saved.lighting.directional.color,defaultSetup().lighting.directional.color);
+  assert.equal(saved.audio.instrument, 'kazoo');
+  assert.equal(saved.audio.chord, 'minor');
   assert.deepEqual(validateSetup(saved),saved);
+  assert.throws(() => validateSetup({audio: {instrument: ['kazoo']}}));
+  assert.throws(() => validateSetup({audio: {chord: 'unknown'}}));
   assert.throws(()=>validateSetup({sketch:'14-tension'}));
+});
+
+test('each transformed rind carries its picking cage into world space', () => {
+  const body = createPuffball(defaultSetup().physics);
+  const rind = createRind(body);
+  try {
+    rind.mesh.position.set(2.1, .3, -1.2);
+    rind.mesh.rotation.set(.16, .84, -.39);
+    rind.mesh.scale.setScalar(.68);
+    rind.mesh.updateMatrixWorld(true);
+    const point = new Vector3().fromArray(body.positions, 3 * ringIndex(6, 3));
+    const worldPoint = point.clone().applyMatrix4(rind.mesh.matrixWorld);
+    const ray = new Raycaster(worldPoint.clone().add(new Vector3(0, 0, 2)), new Vector3(0, 0, -1));
+    const hit = ray.intersectObject(rind.picker, false)[0];
+    assert.ok(hit);
+    assert.ok(rind.picker.worldToLocal(worldPoint).distanceTo(point) < 1e-6);
+    assert.ok(hit.point.x > 1.5);
+  } finally { rind.dispose(); body.dispose(); }
 });

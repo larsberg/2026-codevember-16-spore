@@ -10,9 +10,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { applyCameraView, captureCameraView, configureOrbitInputs } from './camera.js';
 import { initPhysics } from './physics.js';
-import { createPuffball } from './puffball.js';
+import { createPuffball, ringIndex } from './puffball.js';
 import { createRind } from './rind.js';
-import { createWoodland } from './woodland.js';
+import { createAirborne } from './airborne.js';
+import { bedHeight, createWoodland } from './woodland.js';
 import { createSpores, particleCapacity } from './spores.js';
 import { bindPress } from './press.js';
 import { createControls } from './controls.js';
@@ -73,11 +74,28 @@ scene.add(fill, fill.target);
 const spotlight = new SpotLight(); spotlight.shadow.mapSize.set(2048, 2048);
 spotlight.shadow.camera.near = 1; spotlight.shadow.camera.far = 240; scene.add(spotlight, spotlight.target);
 const effects = createSceneEffects(renderer, scene, camera, { clampBeauty: false });
-const simulation = createPuffball(settings.physics);
-const drawing = createRind(simulation);
-const spores = createSpores(renderer);
-const woodland = createWoodland(scene, renderer);
-scene.add(drawing.mesh, spores.cloud);
+// Left, center and right are also the three positions in the selected voicing.
+const feet = [new Vector3(-.93, .68, -.46), new Vector3(.13, 1, .12), new Vector3(1.05, .76, -.08)];
+const poses = [[-.19, -.85, .43], [0, 0, 0], [.18, 1.98, -.48]];
+const bodies = feet.map(({x, y: scale, z}, id) => {
+  const simulation = createPuffball(settings.physics);
+  const drawing = createRind(simulation, scale), spores = createSpores(renderer);
+  const {mesh} = drawing;
+  mesh.position.set(x, bedHeight(x, z) + .05 * scale, z);
+  mesh.rotation.set(...poses[id], 'ZXY'); mesh.scale.setScalar(scale);
+  mesh.updateMatrixWorld();
+  scene.add(mesh, spores.cloud);
+  return { simulation, drawing, spores, mouth: new Vector3(), axis: new Vector3() };
+});
+function updateNozzle({simulation, drawing, mouth, axis}) {
+  mouth.copy(simulation.nozzle).applyMatrix4(drawing.mesh.matrixWorld);
+  axis.copy(simulation.axis).transformDirection(drawing.mesh.matrixWorld);
+}
+bodies.forEach(updateNozzle);
+const airborne = createAirborne(renderer); scene.add(airborne.points);
+const woodland = createWoodland(scene, renderer, feet);
+const clockBody = bodies[1].simulation;
+const modulationPositions = new Float64Array(48), modulationPoint = new Vector3();
 
 let controls, lightingControls, materialControls;
 let audioStatus;
@@ -88,22 +106,19 @@ const audio = createAudio({ onStatus(state) {
 const lights = { directional: light, hemisphere, spotlight, fill };
 const running = () => settings.motion.playing && !document.hidden;
 
-let pressSerial = 0;
-const press = bindPress(canvas, camera, orbit, drawing.picker, simulation, running, () => {
-  if (settings.audio.enabled) {
-    void audio.unlock().then(() => {
-      if (audio.unlocked) audio.update(0, running(), undefined, 0, [
-        { from: -1e-9, to: 0, duration: 60 / settings.audio.tempo, serial: ++pressSerial },
-      ]);
-    });
-  }
-});
+const press = bindPress(canvas, camera, orbit, bodies, running, audio);
 
+let physicsGravity, physicsFriction;
 function configure(restoreCamera = false) {
-  simulation.configure(settings.physics);
-  drawing.configure(settings);
+  const physicsChanged = physicsGravity !== settings.physics.gravity || physicsFriction !== settings.physics.friction;
+  physicsGravity = settings.physics.gravity; physicsFriction = settings.physics.friction;
+  for (const {simulation, drawing, spores} of bodies) {
+    if (physicsChanged) simulation.configure(settings.physics);
+    drawing.configure(settings);
+    spores.configure(settings.lighting);
+  }
   woodland.configure(settings);
-  spores.configure(settings.lighting);
+  airborne.configure(settings.lighting);
   if (!settings.motion.playing) press.cancel();
   scene.background.set(settings.studio.background);
   renderer.toneMappingExposure = settings.studio.exposure;
@@ -128,9 +143,10 @@ function configure(restoreCamera = false) {
 function restore(value) {
   settings = validateSetup(value);
   press.cancel();
-  simulation.reset();
-  spores.reset();
-  drawing.update();
+  for (const body of bodies) {
+    body.simulation.reset(); body.spores.reset(); body.drawing.update(); updateNozzle(body);
+  }
+  airborne.update(0);
   document.activeElement?.blur();
   configure(true);
   controls?.syncPalette();
@@ -144,7 +160,7 @@ function change(group, key, value) {
 }
 
 function render() {
-  spores.light(simulation.nozzle);
+  for (const body of bodies) body.spores.light(body.mouth);
   followShadow(focus);
   effects.render(rindFocus);
 }
@@ -177,7 +193,7 @@ const actions = {
     if (!running()) return;
     await actions.setSoundEnabled(true);
     if (audio.unlocked) audio.update(0, running(), undefined, 0, [
-      { from: -1e-9, to: 0, duration: 60 / settings.audio.tempo, serial: 0 },
+      { from: -1e-9, to: 1, duration: 60 / settings.audio.tempo, serial: 0, preview: true },
     ]);
   },
   selectPalette(id) {
@@ -251,9 +267,10 @@ function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
   effects.resize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
-  camera.zoom = Math.min(1, camera.aspect / .84);
+  camera.zoom = Math.min(1, camera.aspect / 1.23);
   camera.updateProjectionMatrix();
-  spores.resize(innerHeight, camera);
+  for (const body of bodies) body.spores.resize(innerHeight, camera);
+  airborne.resize(innerHeight, camera);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -269,12 +286,25 @@ let previousTime;
 renderer.setAnimationLoop(now => {
   const dt = (now - (previousTime ?? now)) / 1000;
   previousTime = now;
-  const before = simulation.time;
-  if (running() && simulation.step(dt)) {
-    drawing.update();
-    spores.step(simulation.time - before, simulation.time, simulation.takeEmission(), simulation.nozzle, simulation.axis);
+  const play = running();
+  if (play) {
+    for (const body of bodies) {
+      const {simulation, drawing, spores, mouth, axis} = body;
+      const before = simulation.time;
+      if (!simulation.step(dt)) continue;
+      drawing.update(); updateNozzle(body);
+      spores.step(simulation.time - before, simulation.time, simulation.takeEmission(), mouth, axis);
+    }
+    airborne.update(clockBody.time);
+    // Sixteen height-routing taps sample the shoulders and rims across all three cages.
+    for (let i = 0; i < 16; i++) {
+      const {simulation, drawing} = bodies[i % bodies.length];
+      const row = 4 + Math.floor(i / 3);
+      modulationPoint.fromArray(simulation.positions, 3 * ringIndex(row, 3 * i))
+        .applyMatrix4(drawing.mesh.matrixWorld).toArray(modulationPositions, 3 * i);
+    }
   }
-  audio.update(dt, running());
+  audio.update(dt, play, modulationPositions);
   orbit.update();
   render();
   controls?.frame(audio);
@@ -287,8 +317,11 @@ document.addEventListener('visibilitychange', () => {
 
 const sketch = {
   getSetup: () => structuredClone(settings),
-  getState: () => ({ playing: settings.motion.playing, physics: 'Box3D', time: simulation.time,
-    cageVertices: simulation.rest.length, particleCapacity, emitted: spores.emitted, audio: audio.diagnostics }),
+  getState: () => ({ playing: settings.motion.playing, physics: 'Box3D', time: clockBody.time,
+    cageVertices: clockBody.rest.length, particleCapacity: bodies.length * particleCapacity, ambientParticles: airborne.count,
+    emitted: bodies.reduce((sum, body) => sum + body.spores.emitted, 0),
+    bodies: bodies.map(({mouth, axis, spores}) => ({nozzle: mouth.toArray(), axis: axis.toArray(), emitted: spores.emitted})),
+    audio: audio.diagnostics }),
   setup(value) { restore(value); return sketch.getSetup(); },
   play() { if (!settings.motion.playing) actions.togglePlaying(); },
   pause() { if (settings.motion.playing) actions.togglePlaying(); },
@@ -301,10 +334,10 @@ window.addEventListener('pagehide', () => {
   detachPlayer();
   audio.dispose();
   press.dispose();
-  spores.dispose();
-  woodland.dispose();
-  drawing.dispose();
-  simulation.dispose();
+  for (const {simulation, drawing, spores} of bodies) {
+    spores.dispose(); drawing.dispose(); simulation.dispose();
+  }
+  airborne.dispose(); woodland.dispose();
   orbit.dispose();
   effects.dispose();
   for (const source of [light, fill, spotlight]) source.shadow.dispose();

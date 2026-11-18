@@ -1,3 +1,4 @@
+import { pagesPlugin } from "./scripts/pages-plugin.js";
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
@@ -10,6 +11,7 @@ const setupFile = fileURLToPath(
 export default defineConfig({
   base: "./",
   plugins: [
+    pagesPlugin(),
     setupApiPlugin(setupFile, undefined, {
       defaults: defaultSetup,
       validate: validateSetup,

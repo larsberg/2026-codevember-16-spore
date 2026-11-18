@@ -1,24 +1,23 @@
-import { defaultVoices, modulationTargets, voiceFields, waveforms, VOICE_NAMES } from './synth-settings.js';
+import { defaultVoices, modulationTargets, voiceFields, layerTuningCenters, waveforms, VOICE_NAMES } from './synth-settings.js';
 
-const noteName = midi => `${['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'][midi % 12]}${Math.floor(midi / 12) - 1}`;
 export function synthControlsMarkup() {
   const slider = (voice, key) => {
     const [label,, min, max, step] = voiceFields[key], id = `synth-${voice}-${key}`;
     return `<label class="slider-label" for="${id}">${label}<output></output></label><input id="${id}" data-synth-voice="${voice}" data-synth-key="${key}" type="range" min="${min}" max="${max}" step="${step}">`;
   };
   return defaultVoices().map((voice, i) => `
-    <details class="material-group" open><summary>Voice ${i + 1} · ${VOICE_NAMES[i]}</summary>
+    <details class="material-group"><summary>Layer ${i + 1} · ${VOICE_NAMES[i]}</summary>
       <label class="lighting-toggle"><input type="checkbox" id="synth-${i}-enabled" data-synth-voice="${i}" data-synth-key="enabled">Enabled</label>
       <label class="audio-field">Waveform<select id="synth-${i}-sound" data-synth-voice="${i}" data-synth-key="sound">${waveforms.map(s => `<option value="${s}">${s}</option>`).join('')}</select></label>
-      <label class="audio-field">Note<select id="synth-${i}-note" data-synth-voice="${i}" data-synth-key="note">${Array.from({ length: 73 }, (_, n) => n + 24).map(note => `<option value="${note}">${noteName(note)}</option>`).join('')}</select></label>
-      <label class="audio-field">Rhythm<input id="synth-${i}-rhythm" data-synth-voice="${i}" data-synth-key="rhythm" type="text" maxlength="32" required spellcheck="false" aria-label="Voice ${i + 1} rhythm"></label>
+      <label class="audio-field">Layer tuning (semitones)<select id="synth-${i}-note" data-synth-voice="${i}" data-synth-key="note">${Array.from({ length: 73 }, (_, n) => n + 24).map(note => `<option value="${note}">${note - layerTuningCenters[i]}</option>`).join('')}</select></label>
+      <label class="audio-field">Preview rhythm<input id="synth-${i}-rhythm" data-synth-voice="${i}" data-synth-key="rhythm" type="text" maxlength="32" required spellcheck="false" aria-label="Voice ${i + 1} rhythm"></label>
       ${['level', 'gate'].map(key => slider(i, key)).join('')}
       <details class="material-group"><summary>Envelope</summary>${['attack', 'decay', 'sustain', 'release'].map(key => slider(i, key)).join('')}</details>
       <details class="material-group"><summary>Filters and effects</summary><p class="camera-hint">Base values apply when a parameter's height mapping is off.</p>${Object.keys(voiceFields).filter(key => !['level', 'gate', 'attack', 'decay', 'sustain', 'release'].includes(key)).map(key => slider(i, key)).join('')}</details>
-      <p class="control-heading">Body height modulation</p><p class="camera-hint">Height above the ground colors each gesture when it starts. Values stay within your output min and max, including during high jumps. Swap output endpoints to invert it.</p>
+      <p class="control-heading">Rind height modulation</p><p class="camera-hint">Route a point on the rind to this layer while it plays. Swap the output limits to invert the response.</p>
       ${Object.entries(modulationTargets).map(([key, [label, unit]]) => `<details class="material-group synth-route"><summary>${label}</summary>
-        <label class="lighting-toggle"><input id="synth-${i}-${key}-enabled" data-synth-voice="${i}" data-synth-route="${key}" data-synth-key="enabled" type="checkbox">Use body height</label>
-        <label class="audio-field">Body<select id="synth-${i}-${key}-corner" data-synth-voice="${i}" data-synth-route="${key}" data-synth-key="corner">${Array.from({ length: 16 }, (_, n) => `<option value="${n}">Body ${n + 1}</option>`).join('')}</select></label>
+        <label class="lighting-toggle"><input id="synth-${i}-${key}-enabled" data-synth-voice="${i}" data-synth-route="${key}" data-synth-key="enabled" type="checkbox">Use rind height</label>
+        <label class="audio-field">Rind point<select id="synth-${i}-${key}-corner" data-synth-voice="${i}" data-synth-route="${key}" data-synth-key="corner">${Array.from({ length: 16 }, (_, n) => `<option value="${n}">${['Left', 'Center', 'Right'][n % 3]} · ring ${4 + Math.floor(n / 3)}</option>`).join('')}</select></label>
         <div class="synth-range">${[['heightMin', 'Height min'], ['heightMax', 'Height max'], ['min', `Output min ${unit}`], ['max', `Output max ${unit}`]].map(([field, title]) => `<label class="audio-field">${title}<input id="synth-${i}-${key}-${field}" data-synth-voice="${i}" data-synth-route="${key}" data-synth-key="${field}" type="number" step="any" required></label>`).join('')}</div>
         <output class="audio-position" data-synth-value="${i}:${key}"></output>
       </details>`).join('')}
@@ -50,7 +49,7 @@ export function bindSynthControls(root, { getVoices, change }) {
   return { sync, frame(modulation) {
     for (const output of root.querySelectorAll('[data-synth-value]')) {
       const [index, key] = output.dataset.synthValue.split(':'), route = modulation[index]?.[key];
-      if (route) output.value = `${route.enabled ? `Body ${route.corner + 1} · ${route.height.toFixed(2)} →` : 'Base →'} ${Number(route.value.toFixed(3))} ${modulationTargets[key][1]}`;
+      if (route) output.value = `${route.enabled ? `Point ${route.corner + 1} · ${route.height.toFixed(2)} →` : 'Base →'} ${Number(route.value.toFixed(3))} ${modulationTargets[key][1]}`;
     }
   } };
 }
